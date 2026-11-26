@@ -99,9 +99,11 @@
 
     .quran-text {
       font-family: "Amiri Quran", "Scheherazade New", "Traditional Arabic", serif;
-      line-height: 2.35;
+      line-height: 2.3;
       letter-spacing: 0;
-      word-spacing: 2px;
+      word-spacing: normal;
+      font-feature-settings: "liga" 1, "calt" 1, "mark" 1, "mkmk" 1;
+      text-rendering: optimizeLegibility;
     }
 
     .mushaf-card {
@@ -125,8 +127,8 @@
 
     .ayah-inline {
       cursor: pointer;
-      border-radius: 0.35rem;
-      padding: 0.08rem 0.2rem;
+      border-radius: 0.3rem;
+      padding: 0.03rem 0.05rem;
       transition: background-color 0.2s ease;
     }
 
@@ -140,15 +142,12 @@
     }
 
     .ayah-medallion {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
+      display: inline;
       color: var(--gold);
       font-family: "Amiri Quran", serif;
-      font-size: 0.82em;
-      margin: 0 0.25rem;
+      font-size: 0.84em;
+      margin: 0 0.14rem;
       user-select: none;
-      vertical-align: middle;
     }
 
     .panel-surface {
@@ -587,6 +586,10 @@
         <button id="btnAudioNext" type="button" title="الآية التالية" class="btn-subtle rounded-full w-9 h-9 flex items-center justify-center">
           <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
         </button>
+        <div class="flex items-center rounded-lg p-0.5 border" style="border-color: var(--border-color); background-color: var(--bg-app);" title="نمط التلاوة">
+          <button id="btnPlayModeContinuous" type="button" class="px-2 py-1 rounded-md text-[11px] font-bold transition tab-active">مستمرة</button>
+          <button id="btnPlayModeAyah" type="button" class="px-2 py-1 rounded-md text-[11px] font-bold transition tab-inactive">آية بآية</button>
+        </div>
         <button id="btnAudioRepeat" type="button" title="تكرار الآية للحفظ" class="btn-subtle rounded-lg px-2.5 h-9 text-xs font-semibold flex items-center gap-1">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -613,7 +616,8 @@
         </select>
       </div>
     </div>
-    <audio id="quranAudio" preload="none"></audio>
+    <audio id="quranAudio" preload="auto"></audio>
+    <audio id="quranPreloadAudio" preload="auto" class="hidden"></audio>
   </footer>
 
   <!-- Ayah Detail & Tafsir Modal (for Mushaf Page View clicks) -->
@@ -797,6 +801,7 @@
         fontSize: 28,
         showTafsirInline: false,
         reciter: 'ar.abdurrahmaansudais',
+        playMode: 'continuous', // 'continuous' | 'ayah'
         repeatMode: 0, // 0: off, 1: repeat 3x, 2: infinite loop
         repeatCounter: 0,
         surahs: [FALLBACK_FATIHA.surah],
@@ -941,6 +946,7 @@
             theme: state.theme,
             fontSize: state.fontSize,
             reciter: state.reciter,
+            playMode: state.playMode,
             mode: state.mode,
             currentPage: state.currentPage,
             currentSurah: state.currentSurah,
@@ -968,6 +974,7 @@
           if (parsed.theme) state.theme = parsed.theme;
           if (parsed.fontSize >= 20 && parsed.fontSize <= 44) state.fontSize = parsed.fontSize;
           if (parsed.reciter && RECITERS[parsed.reciter]) state.reciter = parsed.reciter;
+          if (parsed.playMode === 'continuous' || parsed.playMode === 'ayah') state.playMode = parsed.playMode;
           if (parsed.mode === 'page' || parsed.mode === 'surah') state.mode = parsed.mode;
           if (parsed.currentPage >= 1 && parsed.currentPage <= 604) state.currentPage = parsed.currentPage;
           if (parsed.currentSurah >= 1 && parsed.currentSurah <= 114) state.currentSurah = parsed.currentSurah;
@@ -1364,11 +1371,11 @@
           }
 
           if (!paragraphOpen) {
-            html += '<p class="quran-text quran-scalable text-justify leading-[2.4]" style="font-size:' + state.fontSize + 'px;">';
+            html += '<p class="quran-text quran-scalable text-center leading-[2.35]" style="font-size:' + state.fontSize + 'px;">';
             paragraphOpen = true;
           }
 
-          var displayText = stripBasmala(ayah.text, sNum, ayah.numberInSurah);
+          var displayText = stripBasmala(ayah.text, sNum, ayah.numberInSurah).replace(/\s+/g, ' ').trim();
           var isBookmarked = state.bookmarks.some(function (b) { return b.number === ayah.number; });
           html +=
             '<span class="ayah-inline" data-ayah-idx="' + idx + '">' +
@@ -1964,6 +1971,75 @@
         showToast('وضع التكرار: ' + labels[state.repeatMode]);
       });
 
+      function getAudioCandidatesForAyah(ayah) {
+        var sNum = ayah.surah ? ayah.surah.number : state.currentSurah;
+        var sPad = String(sNum).padStart(3, '0');
+        var aPad = String(ayah.numberInSurah).padStart(3, '0');
+        var everyAyahFolders = {
+          'ar.abdurrahmaansudais': ['Abdurrahmaan_As-Sudais_64kbps', 'Abdurrahmaan_As-Sudais_192kbps'],
+          'ar.alafasy': ['Alafasy_128kbps', 'Alafasy_64kbps'],
+          'ar.husary': ['Husary_128kbps', 'Husary_64kbps'],
+          'ar.abdulbasitmurattal': ['Abdul_Basit_Murattal_64kbps', 'Abdul_Basit_Murattal_192kbps'],
+          'ar.mahermuaiqly': ['MaherAlMuaiqly128kbps', 'Maher_AlMuaiqly_64kbps'],
+          'ar.saoodshuraym': ['Saood_ash-Shuraym_128kbps', 'Saood_ash-Shuraym_64kbps']
+        };
+        var candidates = [];
+        if (window.AndroidAudio && typeof window.AndroidAudio.getLocalAudioUrl === 'function') {
+          try {
+            var localUrl = window.AndroidAudio.getLocalAudioUrl(state.reciter, sPad, aPad);
+            if (localUrl) candidates.push(localUrl);
+          } catch (e) {}
+        }
+        var folders = everyAyahFolders[state.reciter] || ['Abdurrahmaan_As-Sudais_64kbps'];
+        folders.forEach(function (fld) {
+          candidates.push('https://everyayah.com/data/' + fld + '/' + sPad + aPad + '.mp3');
+        });
+        candidates.push('https://cdn.islamic.network/quran/audio/192/' + state.reciter + '/' + ayah.number + '.mp3');
+        candidates.push('https://cdn.islamic.network/quran/audio/64/' + state.reciter + '/' + ayah.number + '.mp3');
+        return candidates;
+      }
+
+      function preloadNextAyah(idx) {
+        var nextAyah = state.currentAyahs[idx + 1];
+        if (!nextAyah) return;
+        var preloadEl = document.getElementById('quranPreloadAudio');
+        if (!preloadEl) return;
+        var cands = getAudioCandidatesForAyah(nextAyah);
+        if (cands.length) {
+          preloadEl.src = cands[0];
+          preloadEl.load();
+        }
+      }
+
+      var btnPlayModeContinuous = document.getElementById('btnPlayModeContinuous');
+      var btnPlayModeAyah = document.getElementById('btnPlayModeAyah');
+
+      function updatePlayModeUI() {
+        var isCont = state.playMode === 'continuous';
+        btnPlayModeContinuous.className = 'px-2 py-1 rounded-md text-[11px] font-bold transition ' + (isCont ? 'tab-active' : 'tab-inactive');
+        btnPlayModeAyah.className = 'px-2 py-1 rounded-md text-[11px] font-bold transition ' + (!isCont ? 'tab-active' : 'tab-inactive');
+      }
+
+      btnPlayModeContinuous.addEventListener('click', function () {
+        state.playMode = 'continuous';
+        updatePlayModeUI();
+        savePrefs();
+        showToast('نمط التلاوة: قراءة مستمرة متصلة');
+      });
+
+      btnPlayModeAyah.addEventListener('click', function () {
+        state.playMode = 'ayah';
+        updatePlayModeUI();
+        savePrefs();
+        showToast('نمط التلاوة: آية بآية (تتوقف بعد كل آية)');
+      });
+
+      els.quranAudio.addEventListener('playing', function () {
+        if (state.playMode === 'continuous') {
+          preloadNextAyah(state.activeAyahIndex);
+        }
+      });
+
       els.quranAudio.addEventListener('ended', function () {
         if (state.repeatMode === 2) {
           playAyahAtIndex(state.activeAyahIndex);
@@ -1975,8 +2051,27 @@
           return;
         }
         state.repeatCounter = 0;
+
+        // Ayah-by-Ayah mode stops cleanly after the selected ayah finishes
+        if (state.playMode === 'ayah') {
+          setPlayIcon(false);
+          els.playerStatusText.textContent = 'اكتملت الآية — اضغط التالي أو اختر آية أخرى';
+          return;
+        }
+
+        // Continuous mode: advance seamlessly to next ayah, or flip to next page/surah and keep reciting!
         if (state.activeAyahIndex + 1 < state.currentAyahs.length) {
           playAyahAtIndex(state.activeAyahIndex + 1);
+        } else if (state.mode === 'page' && state.currentPage < 604) {
+          animateMushafFlip('next');
+          loadPage(state.currentPage + 1).then(function () {
+            if (state.currentAyahs.length) playAyahAtIndex(0);
+          });
+        } else if (state.mode === 'surah' && state.currentSurah < 114) {
+          animateMushafFlip('next');
+          loadSurah(state.currentSurah + 1).then(function () {
+            if (state.currentAyahs.length) playAyahAtIndex(0);
+          });
         } else {
           setPlayIcon(false);
           els.playerStatusText.textContent = 'انتهت التلاوة';
@@ -2714,6 +2809,7 @@
       applyFontSize(state.fontSize);
       els.reciterSelect.value = state.reciter;
       els.reciterSelectMobile.value = state.reciter;
+      updatePlayModeUI();
       updateKhatmahUI();
       renderSidebar();
       fetchSurahList();
